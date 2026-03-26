@@ -1,0 +1,30 @@
+---
+compiled_package_info:
+  package_name: BountyChain
+  address_alias_instantiation:
+    bountychain: "0000000000000000000000000000000000000000000000000000000000000000"
+    one: "0000000000000000000000000000000000000000000000000000000000000002"
+    std: "0000000000000000000000000000000000000000000000000000000000000001"
+  source_digest: DB6AD9D99A56C193AFC6CB62C599A7BCFECBBF2B5B65D5CEF86841C8B7226D04
+  build_flags:
+    dev_mode: false
+    test_mode: false
+    generate_docs: false
+    install_dir: ~
+    force_recompilation: false
+    lock_file: "./Move.lock"
+    fetch_deps_only: false
+    skip_fetch_latest_git_deps: true
+    default_flavor: one
+    default_edition: ~
+    deps_as_root: false
+    silence_warnings: false
+    warnings_are_errors: false
+    json_errors: false
+    additional_named_addresses: {}
+    lint_flag:
+      no_lint: false
+      lint: false
+dependencies:
+  - MoveStdlib
+  - One
