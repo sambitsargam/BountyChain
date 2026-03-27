@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction, useSuiClientQuery } from '@onelabs/dapp-kit';
+import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction, useSuiClientQuery, useSuiClient } from '@onelabs/dapp-kit';
 import { Transaction } from '@onelabs/sui/transactions';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -9,6 +9,7 @@ const PACKAGE_ID = import.meta.env.VITE_PACKAGE_ID;
 function Dashboard() {
   const navigate = useNavigate();
   const account = useCurrentAccount();
+  const suiClient = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
   const [activeTab, setActiveTab] = useState<'post' | 'submit' | 'my-tasks' | 'my-submissions'>('post');
   const [loading, setLoading] = useState(false);
@@ -19,6 +20,8 @@ function Dashboard() {
   const [taskData, setTaskData] = useState({ title: '', description: '', category: '', reward: '' });
   const [submitData, setSubmitData] = useState({ taskId: '', proofUrl: '', description: '' });
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  // submission details cache: submission_id -> { proofUrl, description }
+  const [subDetails, setSubDetails] = useState<Record<string, { proofUrl: string; description: string }>>({});
 
   const { data: taskEvents, refetch: refetchTasks } = useSuiClientQuery('queryEvents', {
     query: { MoveEventType: `${PACKAGE_ID}::task_platform::TaskCreated` }, limit: 50,
@@ -50,6 +53,27 @@ function Dashboard() {
   const getTaskReward = (taskId: string) => {
     const task = allTasks.find((t: any) => t.parsedJson?.task_id === taskId) as any;
     return task?.parsedJson?.reward_amount || 0;
+  };
+
+  // Fetch submission object details (proof_url, description) from chain
+  const fetchSubDetails = async (submissionId: string) => {
+    if (subDetails[submissionId]) return; // already cached
+    try {
+      const obj = await suiClient.getObject({
+        id: submissionId,
+        options: { showContent: true },
+      });
+      const fields = (obj.data?.content as any)?.fields;
+      if (fields) {
+        setSubDetails(prev => ({
+          ...prev,
+          [submissionId]: {
+            proofUrl: fields.proof_url || '',
+            description: fields.description || '',
+          },
+        }));
+      }
+    } catch { /* object may not be accessible */ }
   };
 
   // AI quality check for task description
@@ -295,20 +319,74 @@ function Dashboard() {
                       ) : (
                         <div className="flex flex-col gap-3">
                           <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Submissions</h4>
-                          {taskSubs.map((s: any, j: number) => (
-                            <div key={j} className="glass rounded-xl p-4 border border-white/5">
-                              <div className="flex items-start justify-between mb-2">
-                                <span className="text-xs font-semibold text-white">Submission #{j + 1}</span>
-                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">Pending Review</span>
+                          {taskSubs.map((s: any, j: number) => {
+                            const sid = s.parsedJson?.submission_id;
+                            const details = subDetails[sid];
+                            // trigger fetch if not cached
+                            if (!details && sid) fetchSubDetails(sid);
+                            return (
+                              <div key={j} className="glass rounded-xl p-4 border border-white/5">
+                                <div className="flex items-start justify-between mb-3">
+                                  <span className="text-sm font-semibold text-white">Submission #{j + 1}</span>
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">Pending Review</span>
+                                </div>
+                                <div className="grid md:grid-cols-2 gap-3 text-xs mb-3">
+                                  <div>
+                                    <p className="text-gray-500 mb-1">Submitter</p>
+                                    <p className="text-gray-300 font-mono break-all">{s.parsedJson?.submitter}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-gray-500 mb-1">Submission ID</p>
+                                    <p className="text-gray-300 font-mono break-all">{sid}</p>
+                                  </div>
+                                </div>
+                                {details ? (
+                                  <>
+                                    {details.proofUrl && (
+                                      <div className="mb-2">
+                                        <p className="text-xs text-gray-500 mb-1">🔗 Proof of Work</p>
+                                        <a href={details.proofUrl} target="_blank" rel="noopener noreferrer"
+                                          className="text-xs text-amber-400 hover:text-amber-300 underline break-all">
+                                          {details.proofUrl}
+                                        </a>
+                                      </div>
+                                    )}
+                                    {details.description && (
+                                      <div className="mb-3">
+                                        <p className="text-xs text-gray-500 mb-1">📝 Description</p>
+                                        <p className="text-xs text-gray-300 leading-relaxed">{details.description}</p>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <p className="text-xs text-gray-500 italic mb-3">Loading submission details...</p>
+                                )}
+                                {/* Award bounty button */}
+                                <button
+                                  onClick={async () => {
+                                    setLoading(true);
+                                    setMessage('Awarding bounty...');
+                                    try {
+                                      const tx = new Transaction();
+                                      tx.moveCall({
+                                        target: `${PACKAGE_ID}::task_platform::award_bounty`,
+                                        arguments: [tx.object(e.parsedJson?.task_id), tx.pure.address(s.parsedJson?.submitter)],
+                                      });
+                                      signAndExecute({ transaction: tx }, {
+                                        onSuccess: () => { setMessage('✅ Bounty awarded!'); refetchTasks(); refetchSubmissions(); },
+                                        onError: () => setMessage('❌ Failed to award bounty'),
+                                      });
+                                    } catch { setMessage('❌ Transaction failed'); }
+                                    finally { setLoading(false); }
+                                  }}
+                                  disabled={loading}
+                                  className="w-full py-2 bg-gradient-to-r from-amber-500 to-red-500 rounded-lg text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-40"
+                                >
+                                  🏆 Award Bounty to This Submitter
+                                </button>
                               </div>
-                              <p className="text-xs text-gray-400 font-mono break-all mb-2">
-                                <span className="text-gray-500">Submitter: </span>{s.parsedJson?.submitter}
-                              </p>
-                              <p className="text-xs text-gray-400 font-mono break-all mb-2">
-                                <span className="text-gray-500">Submission ID: </span>{s.parsedJson?.submission_id}
-                              </p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </motion.div>
@@ -346,7 +424,7 @@ function Dashboard() {
                           ⏳ Pending Review
                         </span>
                       </div>
-                      <div className="grid md:grid-cols-2 gap-3 text-xs">
+                      <div className="grid md:grid-cols-2 gap-3 text-xs mb-3">
                         <div className="glass rounded-lg p-3">
                           <p className="text-gray-500 mb-1">Task ID</p>
                           <p className="text-gray-300 font-mono break-all">{s.parsedJson?.task_id}</p>
@@ -356,10 +434,31 @@ function Dashboard() {
                           <p className="text-gray-300 font-mono break-all">{s.parsedJson?.submission_id}</p>
                         </div>
                       </div>
-                      <p className="text-xs text-gray-500 mt-3">
-                        The task creator will review your submission and award the bounty if accepted.
-                      </p>
-                    </motion.div>
+                      {(() => {
+                        const sid = s.parsedJson?.submission_id;
+                        const details = subDetails[sid];
+                        if (!details && sid) fetchSubDetails(sid);
+                        return details ? (
+                          <div className="flex flex-col gap-2 text-xs mb-3">
+                            {details.proofUrl && (
+                              <div className="glass rounded-lg p-3">
+                                <p className="text-gray-500 mb-1">🔗 Your Proof URL</p>
+                                <a href={details.proofUrl} target="_blank" rel="noopener noreferrer"
+                                  className="text-amber-400 hover:text-amber-300 underline break-all">{details.proofUrl}</a>
+                              </div>
+                            )}
+                            {details.description && (
+                              <div className="glass rounded-lg p-3">
+                                <p className="text-gray-500 mb-1">📝 Your Description</p>
+                                <p className="text-gray-300 leading-relaxed">{details.description}</p>
+                              </div>
+                            )}
+                          </div>
+                        ) : <p className="text-xs text-gray-500 italic mb-3">Loading your submission details...</p>;
+                      })()}
+                      <p className="text-xs text-gray-500">
+                        ⏳ Awaiting review by the task creator. You'll receive {(taskReward / 1e9).toFixed(2)} OTC if selected as winner.
+                      </p>                    </motion.div>
                   );
                 })}
               </div>
