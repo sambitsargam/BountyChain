@@ -10,7 +10,7 @@ function Dashboard() {
   const navigate = useNavigate();
   const account = useCurrentAccount();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
-  const [activeTab, setActiveTab] = useState<'post' | 'submit' | 'my-tasks'>('post');
+  const [activeTab, setActiveTab] = useState<'post' | 'submit' | 'my-tasks' | 'my-submissions'>('post');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [aiScore, setAiScore] = useState<number | null>(null);
@@ -31,9 +31,26 @@ function Dashboard() {
   const allTasks = taskEvents?.data || [];
   const allSubmissions = submissionEvents?.data || [];
   const myTasks = allTasks.filter((e: any) => e.parsedJson?.creator === account?.address);
+  // Submissions I made
+  const mySubmissions = allSubmissions.filter((s: any) => s.parsedJson?.submitter === account?.address);
 
   const getSubmissionCount = (taskId: string) =>
     allSubmissions.filter((s: any) => s.parsedJson?.task_id === taskId).length;
+
+  // Get all submissions for a specific task (for task creator view)
+  const getTaskSubmissions = (taskId: string) =>
+    allSubmissions.filter((s: any) => s.parsedJson?.task_id === taskId);
+
+  // Find task title by task_id
+  const getTaskTitle = (taskId: string) => {
+    const task = allTasks.find((t: any) => t.parsedJson?.task_id === taskId) as any;
+    return task?.parsedJson?.title || 'Unknown Task';
+  };
+
+  const getTaskReward = (taskId: string) => {
+    const task = allTasks.find((t: any) => t.parsedJson?.task_id === taskId) as any;
+    return task?.parsedJson?.reward_amount || 0;
+  };
 
   // AI quality check for task description
   const checkTaskWithAI = async () => {
@@ -132,10 +149,10 @@ function Dashboard() {
         </motion.div>
 
         <div className="flex flex-wrap gap-2 mb-8 glass rounded-xl p-1 w-fit">
-          {(['post', 'submit', 'my-tasks'] as const).map((tab) => (
+          {(['post', 'submit', 'my-tasks', 'my-submissions'] as const).map((tab) => (
             <button key={tab} onClick={() => { setActiveTab(tab); setMessage(''); setAiScore(null); setAiAnalysis(''); }}
               className={`px-5 py-2 rounded-lg text-sm font-medium transition-all capitalize ${activeTab === tab ? 'bg-gradient-to-r from-amber-500 to-red-500 text-white' : 'text-gray-400 hover:text-white'}`}>
-              {tab.replace('-', ' ')}
+              {tab.replace(/-/g, ' ')}
             </button>
           ))}
         </div>
@@ -244,7 +261,7 @@ function Dashboard() {
           </motion.div>
         )}
 
-        {/* MY TASKS */}
+        {/* MY TASKS — with submissions per task */}
         {activeTab === 'my-tasks' && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <h2 className="text-2xl font-bold mb-6">My Posted Tasks</h2>
@@ -255,18 +272,93 @@ function Dashboard() {
                 <button onClick={() => setActiveTab('post')} className="px-6 py-3 bg-gradient-to-r from-amber-500 to-red-500 rounded-xl font-semibold">Post Your First Bounty</button>
               </div>
             ) : (
-              <div className="grid md:grid-cols-2 gap-5">
+              <div className="flex flex-col gap-6">
                 {myTasks.map((e: any, i: number) => {
-                  const subCount = getSubmissionCount(e.parsedJson?.task_id);
+                  const taskSubs = getTaskSubmissions(e.parsedJson?.task_id);
                   return (
-                    <motion.div key={i} whileHover={{ scale: 1.02 }} className="glass rounded-2xl p-6">
-                      <div className="flex items-start justify-between mb-2">
-                        <h3 className="text-lg font-bold">{e.parsedJson?.title}</h3>
-                        <span className="text-xs px-2 py-1 rounded-full bg-amber-500/20 text-amber-400">Active</span>
+                    <motion.div key={i} whileHover={{ scale: 1.01 }} className="glass rounded-2xl p-6">
+                      {/* Task header */}
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="text-xl font-bold mb-1">{e.parsedJson?.title}</h3>
+                          <p className="text-amber-400 font-semibold">💰 {(e.parsedJson?.reward_amount / 1e9 || 0).toFixed(2)} OTC reward</p>
+                        </div>
+                        <span className="text-xs px-3 py-1 rounded-full bg-amber-500/20 text-amber-400 font-semibold">
+                          📬 {taskSubs.length} submission{taskSubs.length !== 1 ? 's' : ''}
+                        </span>
                       </div>
-                      <p className="text-amber-400 font-semibold mb-2">💰 {(e.parsedJson?.reward_amount / 1e9 || 0).toFixed(2)} OTC</p>
-                      <p className="text-sm text-gray-400 mb-2">📬 {subCount} submission{subCount !== 1 ? 's' : ''}</p>
-                      <p className="text-xs text-gray-500 font-mono break-all">Task ID: {e.parsedJson?.task_id}</p>
+                      <p className="text-xs text-gray-500 font-mono break-all mb-4">Task ID: {e.parsedJson?.task_id}</p>
+
+                      {/* Submissions list */}
+                      {taskSubs.length === 0 ? (
+                        <div className="glass rounded-xl p-4 text-center text-gray-500 text-sm">No submissions yet</div>
+                      ) : (
+                        <div className="flex flex-col gap-3">
+                          <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Submissions</h4>
+                          {taskSubs.map((s: any, j: number) => (
+                            <div key={j} className="glass rounded-xl p-4 border border-white/5">
+                              <div className="flex items-start justify-between mb-2">
+                                <span className="text-xs font-semibold text-white">Submission #{j + 1}</span>
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">Pending Review</span>
+                              </div>
+                              <p className="text-xs text-gray-400 font-mono break-all mb-2">
+                                <span className="text-gray-500">Submitter: </span>{s.parsedJson?.submitter}
+                              </p>
+                              <p className="text-xs text-gray-400 font-mono break-all mb-2">
+                                <span className="text-gray-500">Submission ID: </span>{s.parsedJson?.submission_id}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* MY SUBMISSIONS — submitter's view */}
+        {activeTab === 'my-submissions' && (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+            <h2 className="text-2xl font-bold mb-2">My Submissions</h2>
+            <p className="text-sm text-gray-400 mb-6">Track the status of all work you've submitted.</p>
+            {mySubmissions.length === 0 ? (
+              <div className="glass rounded-2xl p-12 text-center">
+                <div className="text-5xl mb-4">📬</div>
+                <p className="text-gray-400 mb-4">You haven't submitted any work yet</p>
+                <button onClick={() => setActiveTab('submit')} className="px-6 py-3 bg-gradient-to-r from-amber-500 to-red-500 rounded-xl font-semibold">Browse Tasks</button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {mySubmissions.map((s: any, i: number) => {
+                  const taskTitle = getTaskTitle(s.parsedJson?.task_id);
+                  const taskReward = getTaskReward(s.parsedJson?.task_id);
+                  return (
+                    <motion.div key={i} whileHover={{ scale: 1.01 }} className="glass rounded-2xl p-6">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="text-lg font-bold mb-1">{taskTitle}</h3>
+                          <p className="text-amber-400 font-semibold text-sm">💰 {(taskReward / 1e9).toFixed(2)} OTC at stake</p>
+                        </div>
+                        <span className="text-xs px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 font-semibold">
+                          ⏳ Pending Review
+                        </span>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-3 text-xs">
+                        <div className="glass rounded-lg p-3">
+                          <p className="text-gray-500 mb-1">Task ID</p>
+                          <p className="text-gray-300 font-mono break-all">{s.parsedJson?.task_id}</p>
+                        </div>
+                        <div className="glass rounded-lg p-3">
+                          <p className="text-gray-500 mb-1">Submission ID</p>
+                          <p className="text-gray-300 font-mono break-all">{s.parsedJson?.submission_id}</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-3">
+                        The task creator will review your submission and award the bounty if accepted.
+                      </p>
                     </motion.div>
                   );
                 })}
